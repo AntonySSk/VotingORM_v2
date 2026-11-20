@@ -10,20 +10,54 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(SqliteOrm CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 
-# Створення виконуваного файлу (надалі сюди додаватимуться інші файли реалізації)
+# Основний виконуваний файл застосунку
 add_executable(VotingORM
     src/main.cpp
+    include/Candidate.h
+    include/Vote.h
+    include/ICandidateRepository.h
+    include/CandidateRepository.h
+    include/VoteState.h
+    include/VoteWorkflowService.h
+    include/VoteShareStrategy.h
+    include/VotingObserver.h
 )
 
-# Підключення заголовкових файлів з папки include
 target_include_directories(VotingORM
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Лінкування бібліотек ORM та SQLite
 target_link_libraries(VotingORM
     PRIVATE
     sqlite_orm::sqlite_orm
     unofficial::sqlite3::sqlite3
 )
+
+# Ціль модульних тестів
+enable_testing()
+
+add_executable(VotingTests
+    tests/test_patterns.cpp
+    include/Candidate.h
+    include/Vote.h
+    include/ICandidateRepository.h
+    include/CandidateRepository.h
+    include/VoteState.h
+    include/VoteWorkflowService.h
+    include/VoteShareStrategy.h
+    include/VotingObserver.h
+)
+
+target_include_directories(VotingTests
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(VotingTests
+    PRIVATE
+    sqlite_orm::sqlite_orm
+    unofficial::sqlite3::sqlite3
+)
+
+add_test(NAME VotingPatternsTests COMMAND VotingTests)

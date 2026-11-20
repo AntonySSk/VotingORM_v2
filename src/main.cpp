@@ -1,4 +1,6 @@
 ﻿#include <iostream>
+#include <iomanip>
+#include <memory>
 #include <string>
 #include <cstdio>
 #include <sqlite_orm/sqlite_orm.h>
@@ -6,6 +8,10 @@
 #include "Vote.h"
 #include "ICandidateRepository.h"
 #include "CandidateRepository.h"
+#include "VoteState.h"
+#include "VoteWorkflowService.h"
+#include "VoteShareStrategy.h"
+#include "VotingObserver.h"
 
 inline auto createStorage(const std::string& filename) {
     return sqlite_orm::make_storage(filename,
@@ -22,7 +28,16 @@ inline auto createStorage(const std::string& filename) {
             sqlite_orm::make_column("voting_station", &Vote::votingStation),
             sqlite_orm::make_column("voter_age", &Vote::voterAge),
             sqlite_orm::make_column("timestamp", &Vote::timestamp),
+            sqlite_orm::make_column("status", &Vote::status),
             sqlite_orm::foreign_key(&Vote::candidateId).references(&Candidate::id)
+        ),
+        sqlite_orm::make_table("vote_status_history",
+            sqlite_orm::make_column("id", &VoteStatusHistory::id, sqlite_orm::primary_key().autoincrement()),
+            sqlite_orm::make_column("vote_id", &VoteStatusHistory::voteId),
+            sqlite_orm::make_column("old_status", &VoteStatusHistory::oldStatus),
+            sqlite_orm::make_column("new_status", &VoteStatusHistory::newStatus),
+            sqlite_orm::make_column("timestamp", &VoteStatusHistory::timestamp),
+            sqlite_orm::foreign_key(&VoteStatusHistory::voteId).references(&Vote::id)
         )
     );
 }
@@ -36,67 +51,104 @@ int main() {
     auto storage = createStorage(dbFile);
     storage.sync_schema();
 
-    std::cout << "=== РЕАЛІЗАЦІЯ ТРАНЗАКЦІЙ ТА АТОМАРНОСТІ ===\n\n";
+    CandidateRepositoryImpl<decltype(storage)> candidateRepo(storage);
+    VoteWorkflowService<decltype(storage)> workflow(storage);
 
-    // Початковий стан БД
-    std::cout << "[СТАН 0] Кандидатів у БД: " << storage.get_all<Candidate>().size()
-        << ", Голосів у БД: " << storage.get_all<Vote>().size() << "\n\n";
+    // Observer: реєстрація подій та підписників
+    VotingEventPublisher publisher;
+    auto logObserver = std::make_shared<VotingLogObserver>();
+    auto statsObserver = std::make_shared<ResultsStatsObserver>();
+    publisher.subscribe(logObserver);
+    publisher.subscribe(statsObserver);
 
-    // СЦЕНАРІЙ 1: Успішне виконання транзакції
-    std::cout << "=== СЦЕНАРІЙ 1: Успішна транзакція ===\n";
+    std::cout << "=== 1. СТВОРЕННЯ КАНДИДАТІВ ТА РЕЄСТРАЦІЯ ГОЛОСІВ (REPOSITORY + OBSERVER) ===\n";
+    int c1Id = candidateRepo.add(Candidate{ 0, "Іван Петренко", "Партія Майбутнього", 42, 15.5 });
+    int c2Id = candidateRepo.add(Candidate{ 0, "Олена Коваленко", "Свобода Слова", 38, 24.8 });
+
+    int v1Id = storage.insert(Vote{ 0, c1Id, "Дільниця №101", 25, 1731600001, "Зареєстрований" });
+    publisher.notify(VotingEvent{ VotingEventType::VoteRegistered, v1Id, c1Id, "Дільниця №101" });
+
+    int v2Id = storage.insert(Vote{ 0, c1Id, "Дільниця №102", 45, 1731600002, "Зареєстрований" });
+    publisher.notify(VotingEvent{ VotingEventType::VoteRegistered, v2Id, c1Id, "Дільниця №102" });
+
+    int v3Id = storage.insert(Vote{ 0, c2Id, "Дільниця №101", 30, 1731600003, "Зареєстрований" });
+    publisher.notify(VotingEvent{ VotingEventType::VoteRegistered, v3Id, c2Id, "Дільниця №101" });
+
+    int v4Id = storage.insert(Vote{ 0, c2Id, "Дільниця №103", 60, 1731600004, "Зареєстрований" });
+    publisher.notify(VotingEvent{ VotingEventType::VoteRegistered, v4Id, c2Id, "Дільниця №103" });
+
+    std::cout << "\n=== 2. КЕРУВАННЯ СТАНАМИ ГОЛОСІВ (STATE + ТРАНЗАКЦІЇ + ІСТОРІЯ) ===\n";
+    workflow.verifyVote(v1Id);
+    workflow.countVote(v1Id);
+    publisher.notify(VotingEvent{ VotingEventType::VoteVerificationCompleted, v1Id, c1Id, "Врахований" });
+
+    workflow.verifyVote(v2Id);
+    workflow.countVote(v2Id);
+    publisher.notify(VotingEvent{ VotingEventType::VoteVerificationCompleted, v2Id, c1Id, "Врахований" });
+
+    workflow.verifyVote(v3Id);
+    workflow.countVote(v3Id);
+    publisher.notify(VotingEvent{ VotingEventType::VoteVerificationCompleted, v3Id, c2Id, "Врахований" });
+
+    workflow.rejectVote(v4Id, "Некоректний бюлетень");
+    publisher.notify(VotingEvent{ VotingEventType::VoteVerificationCompleted, v4Id, c2Id, "Відхилений" });
+
+    // Перевірка заборони некоректного переходу
     try {
-        storage.transaction([&storage]() {
-            // Додаємо кандидата
-            int candId = storage.insert(Candidate{ 0, "Іван Петренко", "Партія Майбутнього", 42, 15.5 });
-            // Додаємо голос для цього дійсного кандидата
-            storage.insert(Vote{ 0, candId, "Дільниця №101", 25, 1731600000 });
-
-            std::cout << "  > Транзакція виконана успішно, коміт підтверджено.\n";
-            return true; // true означає COMMIT
-            });
+        workflow.countVote(v4Id);
     }
-    catch (const std::exception& e) {
-        std::cout << "  [ПОМИЛКА] Виключення: " << e.what() << "\n";
+    catch (const std::exception& ex) {
+        std::cout << "  [КОНТРОЛЬ СТАНУ] " << ex.what() << "\n";
     }
 
-    std::cout << "[СТАН 1] Кандидатів у БД після успіху: " << storage.get_all<Candidate>().size()
-        << ", Голосів у БД: " << storage.get_all<Vote>().size() << "\n\n";
-
-
-    // СЦЕНАРІЙ 2: Помилка та відкат (Rollback)=
-    std::cout << "=== СЦЕНАРІЙ 2: Транзакція з помилкою (порушення обмеження) ===\n";
-    size_t candidatesBeforeError = storage.get_all<Candidate>().size();
-
+    // Перевірка атомарності відкату при збої запису історії
+    int v5Id = storage.insert(Vote{ 0, c1Id, "Дільниця №104", 29, 1731600005, "Зареєстрований" });
     try {
-        storage.transaction([&storage]() {
-            // 1. Успішна операція всередині транзакції (додавання нового кандидата)
-            int candId = storage.insert(Candidate{ 0, "Олена Коваленко", "Свобода Слова", 38, 24.8 });
-            std::cout << "  > Додано тимчасового кандидата з ID: " << candId << "\n";
-
-            // 2. Навмисна помилка: намагаємося додати голос для неіснуючого кандидата (ID 9999)
-            // Це порушує обмеження зовнішнього ключа (foreign_key constraint)
-            std::cout << "  > Спроба додати голос для неіснуючого кандидата (ID 9999)...\n";
-            storage.insert(Vote{ 0, 9999, "Дільниця №999", 30, 1731600800 });
-
-            return true;
-            });
+        workflow.verifyVote(v5Id, true);
     }
-    catch (const std::exception& e) {
-        std::cout << "  [ПІВЕРДЖЕНО] Спіймано виключення бази даних: " << e.what() << "\n";
-        std::cout << "  > Транзакція автоматично скасована (ROLLBACK).\n";
+    catch (const std::exception& ex) {
+        auto v5AfterRollback = storage.get_optional<Vote>(v5Id);
+        std::cout << "  [ROLLBACK] " << ex.what()
+            << " | Статус голосу після відкату: "
+            << (v5AfterRollback ? v5AfterRollback->status : "невідомо") << "\n";
     }
 
-    // Перевірка стану бази даних після помилки
-    size_t candidatesAfterError = storage.get_all<Candidate>().size();
-    std::cout << "[СТАН 2] Кандидатів у БД після відкату: " << candidatesAfterError
-        << ", Голосів у БД: " << storage.get_all<Vote>().size() << "\n";
+    auto historyRows = storage.get_all<VoteStatusHistory>();
+    std::cout << "  Записів у vote_status_history: " << historyRows.size() << "\n";
+    for (const auto& h : historyRows) {
+        std::cout << "   - VoteID=" << h.voteId << ": " << h.oldStatus << " -> " << h.newStatus << "\n";
+    }
 
-    if (candidatesBeforeError == candidatesAfterError) {
-        std::cout << "  [УСПІХ] Атомарність дотримана: всі зміни попередньої операції транзакції скасовано!\n";
-    }
-    else {
-        std::cout << "  [ПОМИЛКА] Зміни не були повністю відкочені.\n";
-    }
+    std::cout << "\n=== 3. РОЗРАХУНОК ЧАСТКИ ГОЛОСІВ (STRATEGY + FACTORY METHOD) ===\n";
+    int c1CountedVotes = storage.get_all<Vote>(
+        sqlite_orm::where(sqlite_orm::c(&Vote::candidateId) == c1Id && sqlite_orm::c(&Vote::status) == "Врахований")
+    ).size();
+    int totalCountedVotes = storage.get_all<Vote>(
+        sqlite_orm::where(sqlite_orm::c(&Vote::status) == "Врахований")
+    ).size();
+
+    VoteShareCalculator calculator(VoteShareStrategyFactory::createStrategy(ShareStrategyType::Direct));
+    std::cout << std::fixed << std::setprecision(4);
+    std::cout << "  [" << calculator.currentStrategyName() << "] частка кандидата " << c1Id
+        << ": " << calculator.compute(c1CountedVotes, totalCountedVotes) << "\n";
+
+    calculator.setStrategy(VoteShareStrategyFactory::createStrategy(ShareStrategyType::Ratio));
+    std::cout << "  [" << calculator.currentStrategyName() << "] частка кандидата " << c1Id
+        << ": " << calculator.compute(c1CountedVotes, totalCountedVotes) << "\n";
+
+    calculator.setStrategy(VoteShareStrategyFactory::createStrategy(ShareStrategyType::PercentageConverted));
+    std::cout << "  [" << calculator.currentStrategyName() << "] частка кандидата " << c1Id
+        << ": " << calculator.compute(c1CountedVotes, totalCountedVotes) << "\n";
+
+    std::cout << "\n=== 4. ПЕРЕВІРКА ПІДПИСНИКІВ (OBSERVER: SUBSCRIBE / UNSUBSCRIBE) ===\n";
+    std::cout << "  Зареєстровано подій: " << statsObserver->getRegisteredCount()
+        << ", завершено перевірок: " << statsObserver->getVerificationCompletedCount() << "\n";
+    publisher.unsubscribe(statsObserver);
+    int v6Id = storage.insert(Vote{ 0, c2Id, "Дільниця №105", 35, 1731600006, "Зареєстрований" });
+    publisher.notify(VotingEvent{ VotingEventType::VoteRegistered, v6Id, c2Id, "Дільниця №105" });
+    std::cout << "  Після відписки statsObserver кількість зареєстрованих подій залишилась: "
+        << statsObserver->getRegisteredCount() << "\n";
+    std::cout << "  Журнал голосування містить записів: " << logObserver->getLogs().size() << "\n";
 
     return 0;
 }

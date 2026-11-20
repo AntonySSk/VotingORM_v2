@@ -1,9 +1,12 @@
 /out/
+/build/
 /vcpkg_installed/
 CMakeCache.txt
 CMakeFiles/
 *.cmake
-voting_system.sqlite
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
 .vs/
 x64/
 Debug/
