@@ -3,10 +3,10 @@
 Консольний застосунок на мові **C++20**, що реалізує роботу з базою даних SQLite через бібліотеку **`sqlite_orm`**, паттерн **Repository** та механізм **транзакцій** з журналюванням історії змін.
 
 ## Реалізовані патерни проєктування
-- **State** (`include/VoteState.h`, `include/VoteWorkflowService.h`) — керування станами голосу (`Зареєстрований`, `Перевірений`, `Врахований`, `Відхилений`), контроль допустимості переходів та збереження історії змін у таблиці `vote_status_history` у межах транзакції БД.
-- **Strategy** (`include/VoteShareStrategy.h`) — три взаємозамінні алгоритми обчислення частки голосів кандидата з можливістю зміни під час виконання програми.
-- **Observer** (`include/VotingObserver.h`) — видавець подій та незалежні підписники (`VotingLogObserver`, `ResultsStatsObserver`) із підтримкою підписки й відписки.
-- **Factory Method** (`include/VoteShareStrategy.h`) — створення стратегій обчислення частки голосів через `VoteShareStrategyFactory`.
+- **State** (`include/VoteState.h`, `include/VoteWorkflowService.h`) - керування станами голосу (`Зареєстрований`, `Перевірений`, `Врахований`, `Відхилений`), контроль допустимості переходів та збереження історії змін у таблиці `vote_status_history` у межах транзакції БД.
+- **Strategy** (`include/VoteShareStrategy.h`) - три взаємозамінні алгоритми обчислення частки голосів кандидата з можливістю зміни під час виконання програми.
+- **Observer** (`include/VotingObserver.h`) - видавець подій та незалежні підписники (`VotingLogObserver`, `ResultsStatsObserver`) із підтримкою підписки й відписки.
+- **Factory Method** (`include/VoteShareStrategy.h`) - створення стратегій обчислення частки голосів через `VoteShareStrategyFactory`.
 
 ## Вимоги для збирання
 - Компілятор C++ із підтримкою **C++20** (наприклад, MSVC у Visual Studio 2026).
@@ -14,11 +14,11 @@
 - Пакетний менеджер **vcpkg** у режимі маніфесту (`vcpkg.json`).
 
 ## Структура проєкту
-- `include/` — моделі даних, репозиторій, сервіс переходів стану та реалізації патернів (`Candidate.h`, `Vote.h`, `ICandidateRepository.h`, `CandidateRepository.h`, `VoteState.h`, `VoteWorkflowService.h`, `VoteShareStrategy.h`, `VotingObserver.h`).
-- `src/` — точка входу та демонстрація роботи системи (`main.cpp`)[cite: 1].
-- `tests/` — модульні тести патернів і транзакцій (`test_patterns.cpp`).
-- `vcpkg.json` — маніфест залежностей (`sqlite3`, `sqlite-orm`).
-- `CMakeLists.txt` — конфігурація збирання основного застосунку та цілі тестів `VotingTests`.
+- `include/` - моделі даних, репозиторій, сервіс переходів стану та реалізації патернів (`Candidate.h`, `Vote.h`, `ICandidateRepository.h`, `CandidateRepository.h`, `VoteState.h`, `VoteWorkflowService.h`, `VoteShareStrategy.h`, `VotingObserver.h`).
+- `src/` - точка входу та демонстрація роботи системи (`main.cpp`)[cite: 1].
+- `tests/` - модульні тести патернів і транзакцій (`test_patterns.cpp`).
+- `vcpkg.json` - маніфест залежностей (`sqlite3`, `sqlite-orm`).
+- `CMakeLists.txt` - конфігурація збирання основного застосунку та цілі тестів `VotingTests`.
 
 ## Інструкція зі збирання та запуску (у Visual Studio / PowerShell)
 
